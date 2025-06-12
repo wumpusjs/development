@@ -1,7 +1,14 @@
 import EventEmitter from 'events';
 import { Client, ClientOptions } from 'discord.js';
+import path from 'path';
 
 import BaseModule from '@modules/base.module';
+import { initializeHMR } from '@utils/core/hmr';
+
+interface BotOptions extends ClientOptions {
+    token: string;
+    hmr?: boolean;
+}
 
 type ModuleConstructor<T extends BaseModule = BaseModule> = new (bot: Bot) => T;
 
@@ -9,9 +16,13 @@ export default class Bot extends EventEmitter {
     modules: Map<string, BaseModule> = new Map();
     client: Client;
 
-    constructor(private readonly options: ClientOptions & { token: string }) {
+    constructor(private readonly options: BotOptions) {
         super();
         this.client = new Client(this.options);
+        if (options?.hmr) {
+            console.log('[HMR] Hot Module Replacement is enabled.');
+            initializeHMR(this, path.join(process.cwd(), 'src', 'modules'));
+        }
     }
 
     register<T extends BaseModule>(ModuleClass: ModuleConstructor<T>): void {

@@ -7,6 +7,7 @@ import Bot from '@utils/bot';
 const bot = new Bot({
     token: process.env.APPLICATION_TOKEN || '',
     intents: [GatewayIntentBits.Guilds],
+    hmr: true
 });
 
 bot.register(EventModule);
