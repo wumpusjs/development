@@ -1,7 +1,8 @@
 import {
     ChatInputCommandInteraction,
-    ClientEvents,
-    CommandInteractionOptionResolver,
+    InteractionContextType,
+    Locale,
+    PermissionFlags,
     User,
 } from 'discord.js';
 import Bot from '@utils/bot';
@@ -18,6 +19,11 @@ declare global {
         export interface ICommandOptions {
             identifier: string;
             description: string;
+            nsfw?: boolean;
+            descriptionLocalizations?: Partial<Record<Locale, string>>;
+            nameLocalizations?: Partial<Record<Locale, string>>;
+            permissions?: PermissionFlags[keyof PermissionFlags][];
+            contexts?: InteractionContextType[];
         }
     }
 }

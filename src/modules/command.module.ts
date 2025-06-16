@@ -8,6 +8,7 @@ import { Logger } from '@utils/core/logger';
 import EventModule from '@modules/event.module';
 import Event from '@utils/core/event';
 import {
+    InteractionContextType,
     REST,
     RESTPostAPIChatInputApplicationCommandsJSONBody,
     Routes,
@@ -126,7 +127,8 @@ export default class CommandModule extends BaseModule {
 
     public stop(): void | Promise<void> {}
 
-    // TODO: add more details to the command registration like localization, options, etc.
+    // TODO: improve complex datas into more structured types like allowing multiple names in one field
+    // TODO: add internalization support for command descriptions and names
     private async registerCommands(): Promise<void> {
         const rest = new REST().setToken(env.APPLICATION_TOKEN);
 
@@ -137,6 +139,27 @@ export default class CommandModule extends BaseModule {
                     options: [],
                     description:
                         command.description || 'No description provided',
+                    nsfw: command.nsfw || false,
+                    description_localizations:
+                        command.descriptionLocalizations ?? {},
+                    name_localizations: command.nameLocalizations ?? {},
+                    default_member_permissions:
+                        (command.permissions || [])?.reduce((acc, perm) => {
+                            if (typeof perm != 'bigint') {
+                                this.logger.warn(
+                                    `Invalid permission type for command ${
+                                        command.identifier
+                                    }: ${typeof perm}. Expected bigint.`,
+                                );
+                                return acc;
+                            }
+                            return acc | perm;
+                        }, 0n) || null,
+                    contexts: Array.isArray(command?.contexts)
+                        ? Array.from(new Set(command.contexts))
+                        : [],
+                    // integration_types
+                    // handler
                 } as RESTPostAPIChatInputApplicationCommandsJSONBody),
         );
 
