@@ -4,11 +4,13 @@ import BaseModule from '@modules/base.module';
 import fs from 'fs/promises';
 import { readFolderRecursively } from '@utils/modules/event';
 import Event from '@utils/core/event';
+import { Logger } from '@utils/core/logger';
 
 export const EVENTS_DIRECTORY = 'events';
 
 export default class EventModule extends BaseModule {
     listeners: Map<string, Function[]> = new Map();
+    logger = new Logger('EventModule');
 
     public async init(): Promise<void> {
         const folder = path.join(process.cwd(), 'src', EVENTS_DIRECTORY);
@@ -31,12 +33,12 @@ export default class EventModule extends BaseModule {
                     resolvedPath = pathToFileURL(resolvedPath).href;
                 }
             } catch (error) {
-                console.error(`Error processing file ${fullPath}:`, error);
+                this.logger.error(`Error processing file ${fullPath}:`, error);
                 continue;
             }
 
             if (!resolvedPath) {
-                console.warn(
+                this.logger.warn(
                     `Skipping unsupported file type or error for: ${fullPath}`,
                 );
                 continue;
@@ -54,7 +56,9 @@ export default class EventModule extends BaseModule {
                 !exported.context.handler ||
                 typeof exported.context.handler !== 'function'
             ) {
-                console.warn(`Skipping invalid event file: ${resolvedPath}`);
+                this.logger.warn(
+                    `Skipping invalid event file: ${resolvedPath}`,
+                );
                 continue;
             }
 
@@ -69,13 +73,15 @@ export default class EventModule extends BaseModule {
             } else {
                 this.listeners.set(eventName, [exported.context.handler]);
             }
+
+            this.logger.info(`Loaded event: ${eventName}`);
         }
     }
 
     public start(): void | Promise<void> {
         for (const [eventName, handlers] of this.listeners.entries()) {
             for (const handler of handlers) {
-                this.bot.client.on(eventName, (...args: unknown[]) => {
+                this.bot.client.on(eventName, (...args) => {
                     handler(this.bot, eventName, args);
                 });
             }
@@ -91,5 +97,20 @@ export default class EventModule extends BaseModule {
                 );
             }
         }
+    }
+
+    public addEventListener(event: Event<any>): void {
+        const eventName = event.event;
+        const handler = event.context.handler;
+
+        if (this.listeners.has(eventName)) {
+            this.listeners.get(eventName)?.push(handler);
+        } else {
+            this.listeners.set(eventName, [handler]);
+        }
+
+        this.bot.client.on(eventName, (...args) => {
+            handler(this.bot, eventName, args);
+        });
     }
 }

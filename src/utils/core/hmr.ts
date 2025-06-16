@@ -3,6 +3,9 @@ import path from 'path';
 import { pathToFileURL } from 'url';
 import Bot from '@utils/bot';
 import BaseModule from '@modules/base.module';
+import { Logger } from '@utils/core/logger';
+
+const logger = new Logger('HMR');
 
 function guessModuleName(filePath: string): string {
     const fileName = path.basename(filePath, path.extname(filePath));
@@ -14,17 +17,42 @@ function guessModuleName(filePath: string): string {
 }
 
 async function handleReload(filePath: string, bot: Bot): Promise<void> {
-    console.log(
-        `[HMR] Detected change in: ${filePath}. Attempting to reload...`,
-    );
+    if (initialScanDone)
+        logger.info(`Detected change in: ${filePath}. Attempting to reload...`);
 
     try {
         const fileUrl = `${pathToFileURL(filePath).href}?v=${Date.now()}`;
-        const { default: ModuleClass } = await import(fileUrl);
+        const importedModule = await import(fileUrl);
+        const ModuleClass = importedModule.default;
 
-        if (!(ModuleClass.prototype instanceof BaseModule)) {
-            console.warn(
-                `[HMR] Skipped ${filePath}: does not export a class extending BaseModule.`,
+        if (typeof ModuleClass !== 'function' || !ModuleClass.name) {
+            logger.warn(
+                `Skipped ${filePath}: default export is not a named function/class.`,
+            );
+            return;
+        }
+
+        if (ModuleClass.name === BaseModule.name) {
+            logger.info(
+                `Skipping HMR for ${BaseModule.name} itself from file ${filePath}.`,
+            );
+            return;
+        }
+
+        const parentClass = Object.getPrototypeOf(ModuleClass);
+
+        if (
+            typeof parentClass !== 'function' ||
+            !parentClass.name ||
+            parentClass.name !== BaseModule.name
+        ) {
+            logger.warn(
+                `Skipped ${filePath} (module: ${ModuleClass.name}): does not directly extend ${BaseModule.name}. ` +
+                    `Actual parent class: ${
+                        parentClass && parentClass.name
+                            ? parentClass.name
+                            : 'N/A'
+                    }.`,
             );
             return;
         }
@@ -37,7 +65,7 @@ async function handleReload(filePath: string, bot: Bot): Promise<void> {
                 await oldModule.stop();
             }
             bot.modules.delete(moduleName);
-            console.log(`[HMR] Unloaded existing module: ${moduleName}`);
+            logger.info(`Unloaded existing module: ${moduleName}`);
         }
 
         bot.register(ModuleClass);
@@ -50,20 +78,15 @@ async function handleReload(filePath: string, bot: Bot): Promise<void> {
             if (typeof newModuleInstance.start === 'function') {
                 await newModuleInstance.start();
             }
-            console.log(`[HMR] Successfully reloaded module: ${moduleName}`);
+            logger.info(`Successfully reloaded module: ${moduleName}`);
         }
     } catch (error) {
-        console.error(
-            `[HMR] Failed to reload module for file: ${filePath}`,
-            error,
-        );
+        logger.error(`Failed to reload module for file: ${filePath}`, error);
     }
 }
 
 async function handleUnload(filePath: string, bot: Bot): Promise<void> {
-    console.log(
-        `[HMR] Detected file deletion: ${filePath}. Attempting to unload...`,
-    );
+    logger.info(`Detected file deletion: ${filePath}. Attempting to unload...`);
 
     const moduleName = guessModuleName(filePath);
 
@@ -73,35 +96,46 @@ async function handleUnload(filePath: string, bot: Bot): Promise<void> {
             await moduleInstance.stop();
         }
         bot.modules.delete(moduleName);
-        console.log(`[HMR] Successfully unloaded module: ${moduleName}`);
+        logger.info(`Successfully unloaded module: ${moduleName}`);
     } else {
-        console.warn(
-            `[HMR] Could not find a loaded module corresponding to deleted file: ${filePath}`,
+        logger.warn(
+            `Could not find a loaded module corresponding to deleted file: ${filePath}`,
         );
     }
 }
 
+let initialScanDone = false;
+
 export function initializeHMR(bot: Bot, modulesPath: string): void {
+    // initialScanDone is now set by the watcher's 'ready' event
+    // if (bot.options.modules === 'register') {
+    // initialScanDone = true;
+    // }
+    logger.info('Hot Module Replacement is enabled.');
     const watcher = chokidar.watch(modulesPath, {
         ignored: /(^|[\/\\])\../,
         persistent: true,
-        ignoreInitial: true,
+        ignoreInitial: bot.options.modules === 'register',
         awaitWriteFinish: {
             stabilityThreshold: 500,
             pollInterval: 100,
         },
     });
 
-    console.log(`[HMR] Watching for changes in: ${modulesPath}`);
+    logger.info(`Watching for changes in: ${modulesPath}`);
 
     watcher
         .on('add', (filePath) => handleReload(filePath, bot))
         .on('change', (filePath) => handleReload(filePath, bot))
         .on('unlink', (filePath) => handleUnload(filePath, bot))
-        .on('error', (error) => console.error('[HMR] Watcher error:', error));
+        .on('error', (error) => logger.error('Watcher error:', error))
+        .on('ready', () => {
+            initialScanDone = true;
+            logger.info('Initial scan complete. HMR is fully active.');
+        });
 
     bot.on('stop', () => {
-        console.log('[HMR] Stopping file watcher.');
+        logger.info('Stopping file watcher.');
         watcher.close();
     });
 }

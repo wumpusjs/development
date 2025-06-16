@@ -1,0 +1,154 @@
+import path from 'path';
+import { pathToFileURL } from 'url';
+import BaseModule from '@modules/base.module';
+import fs from 'fs/promises';
+import { readFolderRecursively } from '@utils/modules/event';
+import Command from '@utils/core/command';
+import { Logger } from '@utils/core/logger';
+import EventModule from '@modules/event.module';
+import Event from '@utils/core/event';
+import {
+    REST,
+    RESTPostAPIChatInputApplicationCommandsJSONBody,
+    Routes,
+} from 'discord.js';
+import env from '@utils/core/env';
+
+export const COMMANDS_DIRECTORY = 'commands';
+
+/* type ReadonlyFields<T> = {
+    [P in keyof T as { -readonly [K in P]: T[K] } extends { [K in P]: T[K] }
+        ? never
+        : P]: T[P];
+}; */
+
+export default class CommandModule extends BaseModule {
+    requirements = {
+        modules: [EventModule],
+    };
+
+    commands: Map<string, Wumpus.ICommandContext & Wumpus.ICommandOptions> =
+        new Map();
+    logger = new Logger('CommandModule');
+
+    public async init(): Promise<void> {
+        const folder = path.join(process.cwd(), 'src', COMMANDS_DIRECTORY);
+        const filePaths = await readFolderRecursively(
+            folder,
+            (fileName) => fileName.endsWith('.js') || fileName.endsWith('.ts'),
+        );
+
+        for (const fullPath of filePaths) {
+            let resolvedPath: string | null = null;
+            try {
+                const stats = await fs.lstat(fullPath);
+                if (stats.isSymbolicLink()) {
+                    resolvedPath = await fs.realpath(fullPath);
+                } else if (stats.isFile()) {
+                    resolvedPath = fullPath;
+                }
+
+                if (resolvedPath) {
+                    resolvedPath = pathToFileURL(resolvedPath).href;
+                }
+            } catch (error) {
+                console.error(`Error processing file ${fullPath}:`, error);
+                continue;
+            }
+
+            if (!resolvedPath) {
+                console.warn(
+                    `Skipping unsupported file type or error for: ${fullPath}`,
+                );
+                continue;
+            }
+
+            const exported: Command | unknown = (await import(resolvedPath))
+                ?.default;
+
+            if (
+                !exported ||
+                typeof exported !== 'object' ||
+                !(exported instanceof Command) ||
+                !exported.context ||
+                !exported.context.handler ||
+                typeof exported.context.handler !== 'function'
+            ) {
+                console.warn(`Skipping invalid command file: ${resolvedPath}`);
+                continue;
+            }
+
+            const commandIdentifier = exported.context.identifier;
+
+            if (this.commands.has(commandIdentifier)) {
+                this.logger.error(
+                    `Duplicate command identifier found: ${commandIdentifier}. Skipping.`,
+                );
+                process.exit(1);
+            } else {
+                this.commands.set(commandIdentifier, exported.context);
+            }
+        }
+    }
+
+    public async start(): Promise<void> {
+        const eventModule = this.bot.get(EventModule);
+
+        if (!eventModule) {
+            this.logger.error(
+                'EventModule is not registered. Cannot start CommandModule.',
+            );
+            return;
+        }
+
+        const event = new Event('interactionCreate', {
+            handler: (bot, eventName, [interaction]) => {
+                if (!interaction.isChatInputCommand()) return;
+                const commandContext = this.commands.get(
+                    interaction.commandId.split('.', 1)[0],
+                );
+                if (commandContext) {
+                    void commandContext.handler(bot, interaction);
+                }
+            },
+        });
+
+        eventModule.addEventListener(event);
+
+        this.logger.info(
+            `Loaded ${this.commands.size} commands from ${COMMANDS_DIRECTORY}.`,
+        );
+
+        await this.registerCommands();
+
+        this.logger.info('CommandModule started successfully.');
+    }
+
+    public stop(): void | Promise<void> {}
+
+    // TODO: add more details to the command registration like localization, options, etc.
+    private async registerCommands(): Promise<void> {
+        const rest = new REST().setToken(env.APPLICATION_TOKEN);
+
+        const commandsData = Array.from(this.commands.values()).map(
+            (command) =>
+                ({
+                    name: command.identifier,
+                    options: [],
+                    description:
+                        command.description || 'No description provided',
+                } as RESTPostAPIChatInputApplicationCommandsJSONBody),
+        );
+
+        try {
+            await rest.put(Routes.applicationCommands(env.APPLICATION_ID), {
+                body: commandsData,
+            });
+            this.logger.info(
+                `Successfully registered ${commandsData.length} commands.`,
+            );
+        } catch (error) {
+            this.logger.error('Failed to register commands:', error);
+        }
+    }
+}

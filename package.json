@@ -14,6 +14,8 @@
     "description": "",
     "dependencies": {
         "@dotenvx/dotenvx": "^1.44.2",
+        "arktype": "^2.1.20",
+        "chalk": "4",
         "chokidar": "^4.0.3",
         "discord.js": "^14.19.3",
         "tsconfig-paths": "^4.2.0"

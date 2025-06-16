@@ -7,7 +7,9 @@
             "@modules/*": ["modules/*"],
             "@events/*": ["events/*"],
             "@utils/*": ["utils/*"],
-            "@event": ["utils/core/event.ts"]
+            "@env": ["utils/core/env.ts"],
+            "@event": ["utils/core/event.ts"],
+            "@command": ["utils/core/command.ts"]
         },
         "esModuleInterop": true,
         "forceConsistentCasingInFileNames": true,

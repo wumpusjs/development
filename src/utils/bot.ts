@@ -2,25 +2,30 @@ import EventEmitter from 'events';
 import { Client, ClientOptions } from 'discord.js';
 import path from 'path';
 
-import BaseModule from '@modules/base.module';
+import BaseModule, { ModuleConstructor } from '@modules/base.module';
 import { initializeHMR } from '@utils/core/hmr';
+import { Logger } from '@utils/core/logger';
 
 interface BotOptions extends ClientOptions {
     token: string;
     hmr?: boolean;
+    modules?: 'register' | 'auto';
 }
-
-type ModuleConstructor<T extends BaseModule = BaseModule> = new (bot: Bot) => T;
 
 export default class Bot extends EventEmitter {
     modules: Map<string, BaseModule> = new Map();
     client: Client;
+    logger: Logger = new Logger('Bot');
 
-    constructor(private readonly options: BotOptions) {
+    constructor(public readonly options: BotOptions) {
         super();
+        this.options.modules = ['register', 'auto'].includes(
+            options?.modules ?? '',
+        )
+            ? options.modules
+            : 'register';
         this.client = new Client(this.options);
         if (options?.hmr) {
-            console.log('[HMR] Hot Module Replacement is enabled.');
             initializeHMR(this, path.join(process.cwd(), 'src', 'modules'));
         }
     }
@@ -59,6 +64,17 @@ export default class Bot extends EventEmitter {
 
     async start(): Promise<void> {
         for (const module of this.modules.values()) {
+            if (module.requirements?.modules) {
+                for (const requiredModule of module.requirements.modules) {
+                    if (!this.get(requiredModule)) {
+                        this.logger.error(
+                            `Required module ${requiredModule.name} is not registered.`,
+                        );
+                        process.exit(1);
+                    }
+                }
+            }
+
             if (typeof module.start === 'function') {
                 await module.start();
             }
