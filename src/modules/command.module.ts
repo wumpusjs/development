@@ -8,12 +8,31 @@ import { Logger } from '@utils/core/logger';
 import EventModule from '@modules/event.module';
 import Event from '@utils/core/event';
 import {
-    InteractionContextType,
+    ChatInputCommandInteraction,
     REST,
     RESTPostAPIChatInputApplicationCommandsJSONBody,
     Routes,
 } from 'discord.js';
 import env from '@utils/core/env';
+
+export class CommandError extends Error {
+    commandIdentifier: string;
+    interaction: ChatInputCommandInteraction;
+    hidden: boolean;
+
+    constructor(
+        commandIdentifier: string,
+        interaction: ChatInputCommandInteraction,
+        message: string,
+        hidden = false,
+    ) {
+        super(message);
+        this.name = 'CommandError';
+        this.commandIdentifier = commandIdentifier;
+        this.interaction = interaction;
+        this.hidden = hidden;
+    }
+}
 
 export const COMMANDS_DIRECTORY = 'commands';
 
@@ -32,7 +51,10 @@ export default class CommandModule extends BaseModule {
         new Map();
     logger = new Logger('CommandModule');
 
+    event: Event<'interactionCreate'> | null = null;
     public async init(): Promise<void> {
+        this.commands.clear();
+
         const folder = path.join(process.cwd(), 'src', COMMANDS_DIRECTORY);
         const filePaths = await readFolderRecursively(
             folder,
@@ -91,30 +113,46 @@ export default class CommandModule extends BaseModule {
             }
         }
     }
-
     public async start(): Promise<void> {
-        const eventModule = this.bot.get(EventModule);
+        if (!this.event) {
+            const eventModule = this.bot.get(EventModule);
 
-        if (!eventModule) {
-            this.logger.error(
-                'EventModule is not registered. Cannot start CommandModule.',
-            );
-            return;
-        }
-
-        const event = new Event('interactionCreate', {
-            handler: (bot, eventName, [interaction]) => {
-                if (!interaction.isChatInputCommand()) return;
-                const commandContext = this.commands.get(
-                    interaction.commandId.split('.', 1)[0],
+            if (!eventModule) {
+                this.logger.error(
+                    'EventModule is not registered. Cannot start CommandModule.',
                 );
-                if (commandContext) {
-                    void commandContext.handler(bot, interaction);
-                }
-            },
-        });
+                return;
+            }
+            this.event = new Event('interactionCreate', {
+                handler: async (bot, eventName, [interaction]) => {
+                    if (!interaction.isChatInputCommand()) return;
+                    const commandContext = this.commands.get(
+                        interaction.commandName.split('.', 1)[0],
+                    );
+                    if (commandContext) {
+                        try {
+                            await interaction.deferReply();
+                            await commandContext.handler(bot, interaction);
+                        } catch (error) {
+                            const commandError = new CommandError(
+                                commandContext.identifier,
+                                interaction,
+                                error instanceof Error
+                                    ? error.message
+                                    : String(error),
+                                commandContext.errors === 'hidden',
+                            );
+                            await this.handleCommandError(commandError);
+                        }
+                    }
+                },
+            });
 
-        eventModule.addEventListener(event);
+            eventModule.addEventListener(this.event);
+            this.logger.debug('Registered interactionCreate event listener');
+        } else {
+            this.logger.debug('Event listener already registered, skipping');
+        }
 
         this.logger.info(
             `Loaded ${this.commands.size} commands from ${COMMANDS_DIRECTORY}.`,
@@ -125,7 +163,60 @@ export default class CommandModule extends BaseModule {
         this.logger.info('CommandModule started successfully.');
     }
 
-    public stop(): void | Promise<void> {}
+    private async handleCommandError(
+        commandError: CommandError,
+    ): Promise<void> {
+        const { commandIdentifier, interaction, message, hidden } =
+            commandError;
+        if (!interaction.isChatInputCommand()) {
+            this.logger.error(`Unexpected interaction type for command error`);
+            return;
+        }
+
+        let content = `Error occurred while handling command ${commandIdentifier}`;
+        if (!hidden) {
+            content += `: ${message}`;
+        }
+
+        try {
+            const replyOptions = { content, flags: 1 << 6 }; // Ephemeral
+            console.log(interaction.replied, interaction.deferred);
+            if (interaction.replied || interaction.deferred) {
+                await interaction.editReply(replyOptions);
+            } else {
+                await interaction.reply(replyOptions);
+            }
+        } catch (replyError: any) {
+            console.log(replyError);
+            if (
+                replyError?.code === 10062 ||
+                (replyError?.message &&
+                    replyError.message.includes('Unknown interaction'))
+            ) {
+                this.logger.warn(
+                    `2 Could not send error reply for command ${commandIdentifier}: interaction is no longer valid (possibly expired or already acknowledged).`,
+                );
+            } else {
+                this.logger.error(
+                    `Failed to send error reply for command ${commandIdentifier}:`,
+                    replyError,
+                );
+            }
+        }
+    }
+    public stop(): void | Promise<void> {
+        if (this.event) {
+            const eventModule = this.bot.get(EventModule);
+            if (eventModule) {
+                eventModule.removeEventListener(this.event);
+                this.logger.debug('Removed interactionCreate event listener');
+            }
+            this.event = null;
+        }
+
+        this.commands.clear();
+        this.logger.debug('Cleared commands map');
+    }
 
     // TODO: improve complex datas into more structured types like allowing multiple names in one field
     // TODO: add internalization support for command descriptions and names
@@ -157,7 +248,7 @@ export default class CommandModule extends BaseModule {
                         }, 0n) || null,
                     contexts: Array.isArray(command?.contexts)
                         ? Array.from(new Set(command.contexts))
-                        : [],
+                        : undefined,
                     // integration_types
                     // handler
                 } as RESTPostAPIChatInputApplicationCommandsJSONBody),

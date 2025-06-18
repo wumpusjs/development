@@ -14,7 +14,7 @@ declare global {
             handler: (
                 bot: Bot,
                 interaction: ChatInputCommandInteraction,
-            ) => void;
+            ) => Promise<void>;
         }
         export interface ICommandOptions {
             identifier: string;
@@ -24,6 +24,7 @@ declare global {
             nameLocalizations?: Partial<Record<Locale, string>>;
             permissions?: PermissionFlags[keyof PermissionFlags][];
             contexts?: InteractionContextType[];
+            errors?: 'hidden' | 'visible';
         }
     }
 }
