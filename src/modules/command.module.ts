@@ -15,6 +15,7 @@ import {
 } from 'discord.js';
 import env from '@utils/core/env';
 import { Message } from '@response';
+import { createHash } from 'crypto';
 
 export class CommandError extends Error {
     commandIdentifier: string;
@@ -268,10 +269,30 @@ export default class CommandModule extends BaseModule {
                     contexts: Array.isArray(command?.contexts)
                         ? Array.from(new Set(command.contexts))
                         : undefined,
-                    // integration_types
-                    // handler
                 } as RESTPostAPIChatInputApplicationCommandsJSONBody),
         );
+
+        const cacheDir = path.join(process.cwd(), '.cache');
+        const hashFilePath = path.join(cacheDir, 'commands.hash');
+        const commandsJson = JSON.stringify(commandsData);
+        const currentHash = createHash('sha256')
+            .update(commandsJson)
+            .digest('hex');
+
+        try {
+            await fs.mkdir(cacheDir, { recursive: true });
+            const existingHash = await fs.readFile(hashFilePath, 'utf-8');
+            if (existingHash === currentHash) {
+                this.logger.info(
+                    'Commands have not changed. Skipping registration.',
+                );
+                return;
+            }
+        } catch (error: any) {
+            if (error.code !== 'ENOENT') {
+                this.logger.warn('Could not read command cache file:', error);
+            }
+        }
 
         try {
             await rest.put(Routes.applicationCommands(env.APPLICATION_ID), {
@@ -280,6 +301,9 @@ export default class CommandModule extends BaseModule {
             this.logger.info(
                 `Successfully registered ${commandsData.length} commands.`,
             );
+
+            await fs.writeFile(hashFilePath, currentHash, 'utf-8');
+            this.logger.info(`Wrote command hash to ${hashFilePath}`);
         } catch (error) {
             this.logger.error('Failed to register commands:', error);
         }
