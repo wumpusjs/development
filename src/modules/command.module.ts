@@ -14,6 +14,7 @@ import {
     Routes,
 } from 'discord.js';
 import env from '@utils/core/env';
+import { Message } from '@response';
 
 export class CommandError extends Error {
     commandIdentifier: string;
@@ -131,8 +132,26 @@ export default class CommandModule extends BaseModule {
                     );
                     if (commandContext) {
                         try {
-                            await interaction.deferReply();
-                            await commandContext.handler(bot, interaction);
+                            const result = await commandContext.handler(
+                                bot,
+                                interaction,
+                            );
+
+                            let reply: Message | undefined;
+
+                            if (result instanceof Message) {
+                                reply = result;
+                            } else if (result) {
+                                reply = new Message(result);
+                            }
+
+                            if (reply) {
+                                if (interaction.replied || interaction.deferred) {
+                                    await interaction.editReply(reply);
+                                } else {
+                                    await interaction.reply(reply);
+                                }
+                            }
                         } catch (error) {
                             const commandError = new CommandError(
                                 commandContext.identifier,

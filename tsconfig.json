@@ -9,7 +9,8 @@
             "@utils/*": ["utils/*"],
             "@env": ["utils/core/env.ts"],
             "@event": ["utils/core/event.ts"],
-            "@command": ["utils/core/command.ts"]
+            "@command": ["utils/core/command.ts"],
+            "@response": ["utils/response/index.ts"]
         },
         "esModuleInterop": true,
         "forceConsistentCasingInFileNames": true,

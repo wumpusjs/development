@@ -7,6 +7,7 @@ import {
 } from 'discord.js';
 import Bot from '@utils/bot';
 import { type } from 'arktype';
+import { Embed, Message } from '@response';
 
 declare global {
     namespace Wumpus {
@@ -14,7 +15,7 @@ declare global {
             handler: (
                 bot: Bot,
                 interaction: ChatInputCommandInteraction,
-            ) => Promise<void>;
+            ) => Promise<Message | Embed | string | void>;
         }
         export interface ICommandOptions {
             identifier: string;
