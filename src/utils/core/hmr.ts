@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import BaseModule from '@modules/base.module';
+import BaseModule, { type ModuleConstructor } from '@modules/base.module';
 import type Bot from '@utils/bot';
 import { Logger } from '@utils/core/logger';
 import chokidar from 'chokidar';
@@ -19,6 +19,61 @@ function guessModuleName(filePath: string): string {
 	return className.endsWith('Module') ? className : `${className}Module`;
 }
 
+function isValidModule(ModuleClass: unknown, filePath: string): boolean {
+	if (typeof ModuleClass !== 'function' || !ModuleClass.name) {
+		logger.warn(
+			`Skipped ${filePath}: default export is not a named function/class.`
+		);
+		return false;
+	}
+
+	if (ModuleClass.name === BaseModule.name) {
+		logger.info(
+			`Skipping HMR for ${BaseModule.name} itself from file ${filePath}.`
+		);
+		return false;
+	}
+
+	const parentClass = Object.getPrototypeOf(ModuleClass);
+	if (parentClass?.name !== BaseModule.name) {
+		logger.warn(
+			`Skipped ${filePath} (module: ${ModuleClass.name}): does not directly extend ${BaseModule.name}. Actual parent: ${
+				parentClass?.name || 'N/A'
+			}.`
+		);
+		return false;
+	}
+
+	return true;
+}
+
+async function unloadModule(moduleName: string, bot: Bot): Promise<void> {
+	const oldModule = bot.modules.get(moduleName);
+	if (oldModule && typeof oldModule.stop === 'function') {
+		await oldModule.stop();
+	}
+	bot.modules.delete(moduleName);
+	logger.info(`Unloaded existing module: ${moduleName}`);
+}
+
+async function loadModule(
+	ModuleClass: ModuleConstructor<BaseModule>,
+	bot: Bot
+): Promise<void> {
+	bot.register(ModuleClass);
+	const newModuleInstance = bot.get(ModuleClass);
+
+	if (newModuleInstance) {
+		if (typeof newModuleInstance.init === 'function') {
+			await newModuleInstance.init(bot);
+		}
+		if (typeof newModuleInstance.start === 'function') {
+			await newModuleInstance.start();
+		}
+		logger.info(`Successfully reloaded module: ${ModuleClass.name}`);
+	}
+}
+
 async function handleReload(filePath: string, bot: Bot): Promise<void> {
 	if (initialScanDone) {
 		logger.info(`Detected change in: ${filePath}. Attempting to reload...`);
@@ -29,58 +84,16 @@ async function handleReload(filePath: string, bot: Bot): Promise<void> {
 		const importedModule = await import(fileUrl);
 		const ModuleClass = importedModule.default;
 
-		if (typeof ModuleClass !== 'function' || !ModuleClass.name) {
-			logger.warn(
-				`Skipped ${filePath}: default export is not a named function/class.`
-			);
-			return;
-		}
-
-		if (ModuleClass.name === BaseModule.name) {
-			logger.info(
-				`Skipping HMR for ${BaseModule.name} itself from file ${filePath}.`
-			);
-			return;
-		}
-
-		const parentClass = Object.getPrototypeOf(ModuleClass);
-
-		if (
-			typeof parentClass !== 'function' ||
-			!parentClass.name ||
-			parentClass.name !== BaseModule.name
-		) {
-			logger.warn(
-				`Skipped ${filePath} (module: ${ModuleClass.name}): does not directly extend ${BaseModule.name}. Actual parent class: ${
-					parentClass?.name ? parentClass.name : 'N/A'
-				}.`
-			);
+		if (!isValidModule(ModuleClass, filePath)) {
 			return;
 		}
 
 		const moduleName = ModuleClass.name;
-
 		if (bot.modules.has(moduleName)) {
-			const oldModule = bot.modules.get(moduleName);
-			if (oldModule && typeof oldModule.stop === 'function') {
-				await oldModule.stop();
-			}
-			bot.modules.delete(moduleName);
-			logger.info(`Unloaded existing module: ${moduleName}`);
+			await unloadModule(moduleName, bot);
 		}
 
-		bot.register(ModuleClass);
-		const newModuleInstance = bot.get(ModuleClass);
-
-		if (newModuleInstance) {
-			if (typeof newModuleInstance.init === 'function') {
-				await newModuleInstance.init(bot);
-			}
-			if (typeof newModuleInstance.start === 'function') {
-				await newModuleInstance.start();
-			}
-			logger.info(`Successfully reloaded module: ${moduleName}`);
-		}
+		await loadModule(ModuleClass, bot);
 	} catch (error) {
 		logger.error(`Failed to reload module for file: ${filePath}`, error);
 	}
@@ -88,16 +101,10 @@ async function handleReload(filePath: string, bot: Bot): Promise<void> {
 
 async function handleUnload(filePath: string, bot: Bot): Promise<void> {
 	logger.info(`Detected file deletion: ${filePath}. Attempting to unload...`);
-
 	const moduleName = guessModuleName(filePath);
 
 	if (bot.modules.has(moduleName)) {
-		const moduleInstance = bot.modules.get(moduleName);
-		if (moduleInstance && typeof moduleInstance.stop === 'function') {
-			await moduleInstance.stop();
-		}
-		bot.modules.delete(moduleName);
-		logger.info(`Successfully unloaded module: ${moduleName}`);
+		await unloadModule(moduleName, bot);
 	} else {
 		logger.warn(
 			`Could not find a loaded module corresponding to deleted file: ${filePath}`
@@ -108,10 +115,6 @@ async function handleUnload(filePath: string, bot: Bot): Promise<void> {
 let initialScanDone = false;
 
 export function initializeHMR(bot: Bot, modulesPath: string): void {
-	// initialScanDone is now set by the watcher's 'ready' event
-	// if (bot.options.modules === 'register') {
-	// initialScanDone = true;
-	// }
 	logger.info('Hot Module Replacement is enabled.');
 	const watcher = chokidar.watch(modulesPath, {
 		ignored: IGNORED_HMR_DIRECTORIES_REGEX,
