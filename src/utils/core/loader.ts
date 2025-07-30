@@ -11,7 +11,6 @@ export interface ILoaderOptions {
 }
 
 export default class Loader<T> {
-	private readonly resolvedPaths: string[] = [];
 	private readonly logger: Logger;
 
 	constructor(
@@ -22,34 +21,32 @@ export default class Loader<T> {
 	}
 
 	public async load(): Promise<T[]> {
-		const loadedModules: T[] = [];
-		await this.resolvePaths();
-
-		for (const resolvedPath of this.resolvedPaths) {
+		const resolvedPaths = await this.resolvePaths();
+		const modulePromises = resolvedPaths.map(async (resolvedPath) => {
 			try {
 				const importedModule: T | unknown = (
 					await import(`${resolvedPath}?v=${Date.now()}`)
 				)?.default;
-
-				if (importedModule) {
-					loadedModules.push(importedModule as T);
-				}
+				return importedModule as T;
 			} catch (error) {
 				this.logger.error(
 					`Error loading module from ${resolvedPath}:`,
 					error
 				);
+				return null;
 			}
-		}
+		});
 
-		return loadedModules;
+		const loadedModules = (await Promise.all(modulePromises)).filter(
+			(module: T | null): module is T => module !== null
+		);
+
+		return loadedModules as T[];
 	}
 
-	private async resolvePaths(): Promise<void> {
-		this.resolvedPaths.length = 0;
+	private async resolvePaths(): Promise<string[]> {
 		const filePaths = await this.readFolderRecursively(this.directory);
-
-		for (const fullPath of filePaths) {
+		const pathPromises = filePaths.map(async (fullPath) => {
 			try {
 				const stats = await fs.lstat(fullPath);
 				let resolvedPath: string | null = null;
@@ -61,30 +58,36 @@ export default class Loader<T> {
 				}
 
 				if (resolvedPath) {
-					this.resolvedPaths.push(pathToFileURL(resolvedPath).href);
+					return pathToFileURL(resolvedPath).href;
 				}
 			} catch (error) {
 				this.logger.error(`Error processing file ${fullPath}:`, error);
 			}
-		}
+			return null;
+		});
+
+		return (await Promise.all(pathPromises)).filter(
+			(entityPath): entityPath is string => entityPath !== null
+		);
 	}
 
 	private async readFolderRecursively(folder: string): Promise<string[]> {
 		const entries = await fs.readdir(folder, { withFileTypes: true });
-		const files: string[] = [];
-
-		for (const entry of entries) {
+		const filePromises = entries.map(async (entry) => {
 			const fullPath = path.join(folder, entry.name);
 			if (entry.isDirectory()) {
-				files.push(...(await this.readFolderRecursively(fullPath)));
-			} else if (
+				return this.readFolderRecursively(fullPath);
+			}
+
+			if (
 				entry.isFile() &&
 				(this.options?.filter ?? (() => true))(entry.name)
 			) {
-				files.push(fullPath);
+				return [fullPath];
 			}
-		}
+			return [];
+		});
 
-		return files;
+		return (await Promise.all(filePromises)).flat();
 	}
 }
