@@ -24,6 +24,9 @@
         "noConfusingVoidType": "off",
         "useAwait": "off",
         "noEmptyBlockStatements": "off"
+      },
+      "complexity": {
+        "noBannedTypes": "off"
       }
     }
   }

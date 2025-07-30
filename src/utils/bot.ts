@@ -4,6 +4,7 @@ import type BaseModule from '@modules/base.module';
 import type { ModuleConstructor } from '@modules/base.module';
 import { initializeHMR } from '@utils/core/hmr';
 import { Logger } from '@utils/core/logger';
+import { State } from '@utils/state';
 import { Client, type ClientOptions } from 'discord.js';
 
 interface BotOptions extends ClientOptions {
@@ -16,6 +17,7 @@ export default class Bot extends EventEmitter {
 	modules: Map<string, BaseModule> = new Map();
 	client: Client;
 	logger: Logger = new Logger('Bot');
+	state: State;
 
 	constructor(public readonly options: BotOptions) {
 		super();
@@ -25,12 +27,13 @@ export default class Bot extends EventEmitter {
 			? options.modules
 			: 'register';
 		this.client = new Client(this.options);
+		this.state = new State();
 		if (options?.hmr) {
 			initializeHMR(this, path.join(process.cwd(), 'src', 'modules'));
 		}
 	}
 
-	register<T extends BaseModule>(ModuleClass: ModuleConstructor<T>): void {
+	register<TB extends BaseModule>(ModuleClass: ModuleConstructor<TB>): void {
 		const moduleName = ModuleClass.name;
 
 		if (this.modules.has(moduleName)) {
@@ -42,12 +45,12 @@ export default class Bot extends EventEmitter {
 		this.modules.set(moduleName, moduleInstance);
 	}
 
-	get<T extends BaseModule>(
-		ModuleClass: ModuleConstructor<T>
-	): T | undefined {
+	get<TB extends BaseModule>(
+		ModuleClass: ModuleConstructor<TB>
+	): TB | undefined {
 		const moduleName = ModuleClass.name;
 		const moduleInstance = this.modules.get(moduleName);
-		return moduleInstance as T | undefined;
+		return moduleInstance as TB | undefined;
 	}
 
 	async init(): Promise<void> {

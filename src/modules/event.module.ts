@@ -3,22 +3,23 @@ import BaseModule from '@modules/base.module';
 import Event from '@utils/core/event';
 import Loader from '@utils/core/loader';
 import { Logger } from '@utils/core/logger';
+import { BaseState } from '@utils/state';
 import type { ClientEvents } from 'discord.js';
 
 export const EVENTS_DIRECTORY = 'events';
 
 type UnknownFunction = (...args: unknown[]) => unknown;
 
-export default class EventModule extends BaseModule {
+export class EventModuleState extends BaseState {
 	eventHandlers: Map<string, UnknownFunction[]> = new Map();
 	activeHandlerWrappers: Map<string, Map<UnknownFunction, UnknownFunction>> =
 		new Map();
+}
 
+export default class EventModule extends BaseModule {
 	logger = new Logger('EventModule');
 
 	public async init(): Promise<void> {
-		this.eventHandlers.clear();
-
 		const loader = new Loader<Event>(
 			path.join(process.cwd(), 'src', EVENTS_DIRECTORY),
 			{
@@ -29,6 +30,7 @@ export default class EventModule extends BaseModule {
 		);
 
 		const events = await loader.load();
+		const eventModuleState = this.bot.state.get(EventModuleState);
 
 		for (const event of events) {
 			if (
@@ -46,8 +48,9 @@ export default class EventModule extends BaseModule {
 
 			const { event: eventName, context } = event;
 
-			const existingHandlers = this.eventHandlers.get(eventName) || [];
-			this.eventHandlers.set(eventName, [
+			const existingHandlers =
+				eventModuleState.eventHandlers.get(eventName) || [];
+			eventModuleState.eventHandlers.set(eventName, [
 				...existingHandlers,
 				context.handler as UnknownFunction,
 			]);
@@ -57,12 +60,20 @@ export default class EventModule extends BaseModule {
 	}
 
 	public start(): void | Promise<void> {
-		for (const [eventName, handlers] of this.eventHandlers.entries()) {
-			if (!this.activeHandlerWrappers.has(eventName)) {
-				this.activeHandlerWrappers.set(eventName, new Map());
+		const eventModuleState = this.bot.state.get(EventModuleState);
+		for (const [
+			eventName,
+			handlers,
+		] of eventModuleState.eventHandlers.entries()) {
+			if (!eventModuleState.activeHandlerWrappers.has(eventName)) {
+				eventModuleState.activeHandlerWrappers.set(
+					eventName,
+					new Map()
+				);
 			}
 			const eventWrappers =
-				this.activeHandlerWrappers.get(eventName) ?? new Map();
+				eventModuleState.activeHandlerWrappers.get(eventName) ??
+				new Map();
 
 			for (const handler of handlers) {
 				if (eventWrappers.has(handler)) {
@@ -80,10 +91,11 @@ export default class EventModule extends BaseModule {
 	}
 
 	public stop(): void | Promise<void> {
+		const eventModuleState = this.bot.state.get(EventModuleState);
 		for (const [
 			eventName,
 			eventWrappers,
-		] of this.activeHandlerWrappers.entries()) {
+		] of eventModuleState.activeHandlerWrappers.entries()) {
 			for (const wrapper of eventWrappers.values()) {
 				this.bot.client.removeListener(
 					eventName,
@@ -91,25 +103,26 @@ export default class EventModule extends BaseModule {
 				);
 			}
 		}
-		this.activeHandlerWrappers.clear();
-		this.eventHandlers.clear();
+		eventModuleState.activeHandlerWrappers.clear();
+		eventModuleState.eventHandlers.clear();
 	}
 
 	public addEventListener(event: Event<keyof ClientEvents>): void {
+		const eventModuleState = this.bot.state.get(EventModuleState);
 		const { event: eventName, context } = event;
 		const handler = context?.handler as UnknownFunction;
 
-		const handlers = this.eventHandlers.get(eventName) || [];
+		const handlers = eventModuleState.eventHandlers.get(eventName) || [];
 		if (!handlers.includes(handler)) {
 			handlers.push(handler);
-			this.eventHandlers.set(eventName, handlers);
+			eventModuleState.eventHandlers.set(eventName, handlers);
 		}
 
-		if (!this.activeHandlerWrappers.has(eventName)) {
-			this.activeHandlerWrappers.set(eventName, new Map());
+		if (!eventModuleState.activeHandlerWrappers.has(eventName)) {
+			eventModuleState.activeHandlerWrappers.set(eventName, new Map());
 		}
 		const eventWrappers =
-			this.activeHandlerWrappers.get(eventName) ?? new Map();
+			eventModuleState.activeHandlerWrappers.get(eventName) ?? new Map();
 
 		if (!eventWrappers.has(handler)) {
 			const wrapper = (...args: unknown[]) => {
@@ -122,21 +135,23 @@ export default class EventModule extends BaseModule {
 	}
 
 	public removeEventListener(event: Event<keyof ClientEvents>): void {
+		const eventModuleState = this.bot.state.get(EventModuleState);
 		const { event: eventName, context } = event;
 		const handler = context?.handler as UnknownFunction;
 
-		const handlers = this.eventHandlers.get(eventName);
+		const handlers = eventModuleState.eventHandlers.get(eventName);
 		if (handlers) {
 			const index = handlers.indexOf(handler);
 			if (index !== -1) {
 				handlers.splice(index, 1);
 			}
 			if (handlers.length === 0) {
-				this.eventHandlers.delete(eventName);
+				eventModuleState.eventHandlers.delete(eventName);
 			}
 		}
 
-		const eventWrappers = this.activeHandlerWrappers.get(eventName);
+		const eventWrappers =
+			eventModuleState.activeHandlerWrappers.get(eventName);
 		if (eventWrappers) {
 			const wrapper = eventWrappers.get(handler);
 
@@ -148,7 +163,7 @@ export default class EventModule extends BaseModule {
 				eventWrappers.delete(handler);
 
 				if (eventWrappers.size === 0) {
-					this.activeHandlerWrappers.delete(eventName);
+					eventModuleState.activeHandlerWrappers.delete(eventName);
 				}
 			}
 		}

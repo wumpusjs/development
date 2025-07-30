@@ -10,6 +10,7 @@ import env from '@utils/core/env';
 import Event from '@utils/core/event';
 import Loader from '@utils/core/loader';
 import { Logger } from '@utils/core/logger';
+import { BaseState } from '@utils/state';
 import {
 	type CacheType,
 	type ChatInputCommandInteraction,
@@ -19,6 +20,11 @@ import {
 	type RESTPostAPIChatInputApplicationCommandsJSONBody,
 	Routes,
 } from 'discord.js';
+
+export class CommandModuleState extends BaseState {
+	commands: Map<string, Wumpus.ICommandContext & Wumpus.ICommandOptions> =
+		new Map();
+}
 
 export class CommandError extends Error {
 	commandIdentifier: string;
@@ -46,14 +52,10 @@ export default class CommandModule extends BaseModule {
 		modules: [EventModule],
 	};
 
-	commands: Map<string, Wumpus.ICommandContext & Wumpus.ICommandOptions> =
-		new Map();
 	logger = new Logger('CommandModule');
 
 	event: Event<'interactionCreate'> | null = null;
 	public async init(): Promise<void> {
-		this.commands.clear();
-
 		const loader = new Loader<Command>(
 			path.join(process.cwd(), 'src', COMMANDS_DIRECTORY),
 			{
@@ -64,6 +66,7 @@ export default class CommandModule extends BaseModule {
 		);
 
 		const commands = await loader.load();
+		const commandModuleState = this.bot.state.get(CommandModuleState);
 
 		for (const command of commands) {
 			if (
@@ -80,13 +83,16 @@ export default class CommandModule extends BaseModule {
 
 			const commandIdentifier = command.context.identifier;
 
-			if (this.commands.has(commandIdentifier)) {
+			if (commandModuleState.commands.has(commandIdentifier)) {
 				this.logger.error(
 					`Duplicate command identifier found: ${commandIdentifier}!`
 				);
 				process.exit(1);
 			} else {
-				this.commands.set(commandIdentifier, command.context);
+				commandModuleState.commands.set(
+					commandIdentifier,
+					command.context
+				);
 			}
 		}
 	}
@@ -112,8 +118,10 @@ export default class CommandModule extends BaseModule {
 			this.logger.debug('Registered interactionCreate event listener');
 		}
 
+		const commandModuleState = this.bot.state.get(CommandModuleState);
+
 		this.logger.info(
-			`Loaded ${this.commands.size} commands from ${COMMANDS_DIRECTORY}.`
+			`Loaded ${commandModuleState.commands.size} commands from ${COMMANDS_DIRECTORY}.`
 		);
 
 		await this.registerCommands();
@@ -131,7 +139,10 @@ export default class CommandModule extends BaseModule {
 			return;
 		}
 
-		const commandContext = this.commands.get(interaction.commandName);
+		const commandModuleState = this.bot.state.get(CommandModuleState);
+		const commandContext = commandModuleState.commands.get(
+			interaction.commandName
+		);
 		if (!commandContext) {
 			return;
 		}
@@ -225,7 +236,8 @@ export default class CommandModule extends BaseModule {
 			this.event = null;
 		}
 
-		this.commands.clear();
+		const commandModuleState = this.bot.state.get(CommandModuleState);
+		commandModuleState.commands.clear();
 		this.logger.debug('Cleared commands map');
 	}
 
@@ -233,8 +245,11 @@ export default class CommandModule extends BaseModule {
 	// TODO: add internalization support for command descriptions and names
 	private async registerCommands(): Promise<void> {
 		const rest = new REST().setToken(env.APPLICATION_TOKEN);
+		const commandModuleState = this.bot.state.get(CommandModuleState);
 
-		const commandsData = Array.from(this.commands.values()).map(
+		const commandsData = Array.from(
+			commandModuleState.commands.values()
+		).map(
 			(command) =>
 				({
 					name: command.identifier,
