@@ -1,0 +1,30 @@
+{
+  "$schema": "https://biomejs.dev/schemas/2.1.2/schema.json",
+  "extends": ["ultracite"],
+  "formatter": {
+    "enabled": true,
+    "formatWithErrors": false,
+    "indentStyle": "tab",
+    "indentWidth": 4,
+    "lineWidth": 80,
+    "lineEnding": "lf"
+  },
+  "linter": {
+    "rules": {
+      "nursery": {
+        "noBitwiseOperators": "off"
+      },
+      "style": {
+        "useConsistentMemberAccessibility": "off",
+        "noEnum": "off",
+        "noNamespace": "off",
+        "noParameterProperties": "off"
+      },
+      "suspicious": {
+        "noConfusingVoidType": "off",
+        "useAwait": "off",
+        "noEmptyBlockStatements": "off"
+      }
+    }
+  }
+}

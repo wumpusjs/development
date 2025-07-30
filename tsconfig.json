@@ -1,21 +1,38 @@
 {
-    "compilerOptions": {
-        "target": "es2020",
-        "module": "commonjs",
-        "baseUrl": "./src",
-        "paths": {
-            "@modules/*": ["modules/*"],
-            "@events/*": ["events/*"],
-            "@utils/*": ["utils/*"],
-            "@env": ["utils/core/env.ts"],
-            "@event": ["utils/core/event.ts"],
-            "@command": ["utils/core/command.ts"],
-            "@response": ["utils/response/index.ts"]
-        },
-        "esModuleInterop": true,
-        "forceConsistentCasingInFileNames": true,
-        "strict": true,
-        "skipLibCheck": true
+  "compilerOptions": {
+    "target": "es2020",
+    "module": "commonjs",
+    "baseUrl": "./src",
+    "paths": {
+      "@modules/*": [
+        "modules/*"
+      ],
+      "@events/*": [
+        "events/*"
+      ],
+      "@utils/*": [
+        "utils/*"
+      ],
+      "@env": [
+        "utils/core/env.ts"
+      ],
+      "@event": [
+        "utils/core/event.ts"
+      ],
+      "@command": [
+        "utils/core/command.ts"
+      ],
+      "@response": [
+        "utils/response/index.ts"
+      ]
     },
-    "include": ["src/**/*"]
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "strict": true,
+    "skipLibCheck": true,
+    "strictNullChecks": true
+  },
+  "include": [
+    "src/**/*"
+  ]
 }
