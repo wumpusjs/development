@@ -1,10 +1,8 @@
 import path from 'path';
-import { pathToFileURL } from 'url';
 import BaseModule from '@modules/base.module';
-import fs from 'fs/promises';
-import { readFolderRecursively } from '@utils/modules/event';
 import Event from '@utils/core/event';
 import { Logger } from '@utils/core/logger';
+import Loader from '@utils/core/loader';
 
 export const EVENTS_DIRECTORY = 'events';
 
@@ -17,60 +15,32 @@ export default class EventModule extends BaseModule {
     public async init(): Promise<void> {
         this.eventHandlers.clear();
 
-        const eventsDirectoryPath = path.join(
-            process.cwd(),
-            'src',
-            EVENTS_DIRECTORY,
+        const loader = new Loader<Event>(
+            path.join(process.cwd(), 'src', EVENTS_DIRECTORY),
+            {
+                filter: (fileName) =>
+                    fileName.endsWith('.js') || fileName.endsWith('.ts'),
+                loggerContext: 'EventLoader',
+            },
         );
-        const filePaths = await readFolderRecursively(
-            eventsDirectoryPath,
-            (fileName) => fileName.endsWith('.js') || fileName.endsWith('.ts'),
-        );
 
-        for (const fullPath of filePaths) {
-            let resolvedPath: string | null = null;
-            try {
-                const stats = await fs.lstat(fullPath);
-                if (stats.isSymbolicLink()) {
-                    resolvedPath = await fs.realpath(fullPath);
-                } else if (stats.isFile()) {
-                    resolvedPath = fullPath;
-                }
+        const events = await loader.load();
 
-                if (resolvedPath) {
-                    resolvedPath = pathToFileURL(resolvedPath).href;
-                }
-            } catch (error) {
-                this.logger.error(`Error processing file ${fullPath}:`, error);
-                continue;
-            }
-
-            if (!resolvedPath) {
-                this.logger.warn(
-                    `Skipping unsupported file type or error for: ${fullPath}`,
-                );
-                continue;
-            }
-
-            const eventInstance: unknown = (await import(resolvedPath))
-                ?.default;
-
+        for (const event of events) {
             if (
-                !eventInstance ||
-                typeof eventInstance !== 'object' ||
-                !(eventInstance instanceof Event) ||
-                !eventInstance.event ||
-                !eventInstance.context ||
-                !eventInstance.context.handler ||
-                typeof eventInstance.context.handler !== 'function'
+                !event ||
+                typeof event !== 'object' ||
+                !(event instanceof Event) ||
+                !event.event ||
+                !event.context ||
+                !event.context.handler ||
+                typeof event.context.handler !== 'function'
             ) {
-                this.logger.warn(
-                    `Skipping invalid event file: ${resolvedPath}`,
-                );
+                this.logger.warn(`Skipping invalid event file.`);
                 continue;
             }
 
-            const { event: eventName, context } = eventInstance;
+            const { event: eventName, context } = event;
 
             const existingHandlers = this.eventHandlers.get(eventName) || [];
             this.eventHandlers.set(eventName, [

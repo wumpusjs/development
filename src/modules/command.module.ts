@@ -1,8 +1,6 @@
 import path from 'path';
-import { pathToFileURL } from 'url';
 import BaseModule from '@modules/base.module';
 import fs from 'fs/promises';
-import { readFolderRecursively } from '@utils/modules/event';
 import Command from '@utils/core/command';
 import { Logger } from '@utils/core/logger';
 import EventModule from '@modules/event.module';
@@ -16,6 +14,7 @@ import {
 import env from '@utils/core/env';
 import { Message } from '@response';
 import { createHash } from 'crypto';
+import Loader from '@utils/core/loader';
 
 export class CommandError extends Error {
     commandIdentifier: string;
@@ -57,53 +56,31 @@ export default class CommandModule extends BaseModule {
     public async init(): Promise<void> {
         this.commands.clear();
 
-        const folder = path.join(process.cwd(), 'src', COMMANDS_DIRECTORY);
-        const filePaths = await readFolderRecursively(
-            folder,
-            (fileName) => fileName.endsWith('.js') || fileName.endsWith('.ts'),
+        const loader = new Loader<Command>(
+            path.join(process.cwd(), 'src', COMMANDS_DIRECTORY),
+            {
+                filter: (fileName) =>
+                    fileName.endsWith('.js') || fileName.endsWith('.ts'),
+                loggerContext: 'CommandLoader',
+            },
         );
 
-        for (const fullPath of filePaths) {
-            let resolvedPath: string | null = null;
-            try {
-                const stats = await fs.lstat(fullPath);
-                if (stats.isSymbolicLink()) {
-                    resolvedPath = await fs.realpath(fullPath);
-                } else if (stats.isFile()) {
-                    resolvedPath = fullPath;
-                }
+        const commands = await loader.load();
 
-                if (resolvedPath) {
-                    resolvedPath = pathToFileURL(resolvedPath).href;
-                }
-            } catch (error) {
-                console.error(`Error processing file ${fullPath}:`, error);
-                continue;
-            }
-
-            if (!resolvedPath) {
-                console.warn(
-                    `Skipping unsupported file type or error for: ${fullPath}`,
-                );
-                continue;
-            }
-
-            const exported: Command | unknown = (await import(resolvedPath))
-                ?.default;
-
+        for (const command of commands) {
             if (
-                !exported ||
-                typeof exported !== 'object' ||
-                !(exported instanceof Command) ||
-                !exported.context ||
-                !exported.context.handler ||
-                typeof exported.context.handler !== 'function'
+                !command ||
+                typeof command !== 'object' ||
+                !(command instanceof Command) ||
+                !command.context ||
+                !command.context.handler ||
+                typeof command.context.handler !== 'function'
             ) {
-                console.warn(`Skipping invalid command file: ${resolvedPath}`);
+                this.logger.warn(`Skipping invalid command file.`);
                 continue;
             }
 
-            const commandIdentifier = exported.context.identifier;
+            const commandIdentifier = command.context.identifier;
 
             if (this.commands.has(commandIdentifier)) {
                 this.logger.error(
@@ -111,7 +88,7 @@ export default class CommandModule extends BaseModule {
                 );
                 process.exit(1);
             } else {
-                this.commands.set(commandIdentifier, exported.context);
+                this.commands.set(commandIdentifier, command.context);
             }
         }
     }
@@ -147,7 +124,10 @@ export default class CommandModule extends BaseModule {
                             }
 
                             if (reply) {
-                                if (interaction.replied || interaction.deferred) {
+                                if (
+                                    interaction.replied ||
+                                    interaction.deferred
+                                ) {
                                     await interaction.editReply(reply);
                                 } else {
                                     await interaction.reply(reply);
