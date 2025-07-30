@@ -3,14 +3,18 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import BaseModule from '@modules/base.module';
 import EventModule from '@modules/event.module';
-import { Message } from '@response';
+import { type Embed, Message } from '@response';
+import type Bot from '@utils/bot';
 import Command from '@utils/core/command';
 import env from '@utils/core/env';
 import Event from '@utils/core/event';
 import Loader from '@utils/core/loader';
 import { Logger } from '@utils/core/logger';
 import {
+	type CacheType,
 	type ChatInputCommandInteraction,
+	type ClientEvents,
+	type Interaction,
 	REST,
 	type RESTPostAPIChatInputApplicationCommandsJSONBody,
 	Routes,
@@ -36,12 +40,6 @@ export class CommandError extends Error {
 }
 
 export const COMMANDS_DIRECTORY = 'commands';
-
-/* type ReadonlyFields<T> = {
-    [P in keyof T as { -readonly [K in P]: T[K] } extends { [K in P]: T[K] }
-        ? never
-        : P]: T[P];
-}; */
 
 export default class CommandModule extends BaseModule {
 	requirements = {
@@ -84,7 +82,7 @@ export default class CommandModule extends BaseModule {
 
 			if (this.commands.has(commandIdentifier)) {
 				this.logger.error(
-					`Duplicate command identifier found: ${commandIdentifier}. Skipping.`
+					`Duplicate command identifier found: ${commandIdentifier}!`
 				);
 				process.exit(1);
 			} else {
@@ -105,54 +103,12 @@ export default class CommandModule extends BaseModule {
 				return;
 			}
 			this.event = new Event('interactionCreate', {
-				handler: async (bot, _eventName, [interaction]) => {
-					if (!interaction.isChatInputCommand()) {
-						return;
-					}
-					const commandContext = this.commands.get(
-						interaction.commandName.split('.', 1)[0]
-					);
-					if (commandContext) {
-						try {
-							const result = await commandContext.handler(
-								bot,
-								interaction
-							);
-
-							let reply: Message | undefined;
-
-							if (result instanceof Message) {
-								reply = result;
-							} else if (result) {
-								reply = new Message(result);
-							}
-
-							if (reply) {
-								if (
-									interaction.replied ||
-									interaction.deferred
-								) {
-									await interaction.editReply(reply);
-								} else {
-									await interaction.reply(reply);
-								}
-							}
-						} catch (error) {
-							const commandError = new CommandError(
-								commandContext.identifier,
-								interaction,
-								error instanceof Error
-									? error.message
-									: String(error),
-								commandContext.errors === 'hidden'
-							);
-							await this.handleCommandError(commandError);
-						}
-					}
-				},
+				handler: this.handleInteraction.bind(this),
 			});
 
-			eventModule.addEventListener(this.event);
+			eventModule.addEventListener(
+				this.event as Event<keyof ClientEvents>
+			);
 			this.logger.debug('Registered interactionCreate event listener');
 		}
 
@@ -163,6 +119,52 @@ export default class CommandModule extends BaseModule {
 		await this.registerCommands();
 
 		this.logger.info('CommandModule started successfully.');
+	}
+
+	private async handleInteraction(
+		bot: Bot,
+		_eventName: 'interactionCreate',
+		args: [Interaction<CacheType>]
+	): Promise<void> {
+		const [interaction] = args;
+		if (!interaction.isChatInputCommand()) {
+			return;
+		}
+
+		const commandContext = this.commands.get(interaction.commandName);
+		if (!commandContext) {
+			return;
+		}
+
+		try {
+			await this.executeCommand(bot, interaction, commandContext);
+		} catch (error) {
+			const commandError = new CommandError(
+				commandContext.identifier,
+				interaction,
+				error instanceof Error ? error.message : String(error),
+				commandContext.errors === 'hidden'
+			);
+			await this.handleCommandError(commandError);
+		}
+	}
+
+	private async executeCommand(
+		bot: Bot,
+		interaction: ChatInputCommandInteraction,
+		commandContext: Wumpus.ICommandContext
+	): Promise<void> {
+		const result = await commandContext.handler(bot, interaction);
+		const reply =
+			result instanceof Message
+				? result
+				: new Message(result as string | Embed);
+
+		if (interaction.replied || interaction.deferred) {
+			await interaction.editReply(reply);
+		} else {
+			await interaction.reply(reply);
+		}
 	}
 
 	private async handleCommandError(
@@ -189,33 +191,35 @@ export default class CommandModule extends BaseModule {
 				await interaction.reply(replyOptions);
 			}
 		} catch (replyError: unknown) {
-			this.logger.debug(replyError);
-			if (
-				typeof replyError === 'object' &&
-				replyError !== null &&
-				(('code' in replyError &&
-					typeof replyError.code === 'number' &&
-					replyError.code === 10_062) ||
-					('message' in replyError &&
-						typeof replyError.message === 'string' &&
-						replyError.message.includes('Unknown interaction')))
-			) {
-				this.logger.warn(
-					`2 Could not send error reply for command ${commandIdentifier}: interaction is no longer valid (possibly expired or already acknowledged).`
-				);
-			} else {
-				this.logger.error(
-					`Failed to send error reply for command ${commandIdentifier}:`,
-					replyError
-				);
-			}
+			this.logReplyError(replyError, commandIdentifier);
 		}
 	}
+
+	private logReplyError(error: unknown, commandIdentifier: string): void {
+		const isUnknownInteraction =
+			error instanceof Object &&
+			'code' in error &&
+			(error as { code: unknown }).code === 10_062;
+
+		if (isUnknownInteraction) {
+			this.logger.warn(
+				`Could not send error reply for command ${commandIdentifier}: interaction is no longer valid.`
+			);
+		} else {
+			this.logger.error(
+				`Failed to send error reply for command ${commandIdentifier}:`,
+				error
+			);
+		}
+	}
+
 	public stop(): void | Promise<void> {
 		if (this.event) {
 			const eventModule = this.bot.get(EventModule);
 			if (eventModule) {
-				eventModule.removeEventListener(this.event);
+				eventModule.removeEventListener(
+					this.event as Event<keyof ClientEvents>
+				);
 				this.logger.debug('Removed interactionCreate event listener');
 			}
 			this.event = null;
