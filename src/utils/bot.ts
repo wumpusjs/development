@@ -51,11 +51,14 @@ export default class Bot extends EventEmitter {
 	}
 
 	async init(): Promise<void> {
-		for (const module of this.modules.values()) {
+		const initPromises = Array.from(this.modules.values()).map((module) => {
 			if (typeof module.init === 'function') {
-				await module.init(this);
+				return module.init(this);
 			}
-		}
+			return Promise.resolve();
+		});
+
+		await Promise.all(initPromises);
 
 		this.client = new Client(this.options);
 
@@ -63,6 +66,7 @@ export default class Bot extends EventEmitter {
 	}
 
 	async start(): Promise<void> {
+		// Ensure all required modules are loaded and set before starting
 		for (const module of this.modules.values()) {
 			if (module.requirements?.modules) {
 				for (const requiredModule of module.requirements.modules) {
@@ -74,11 +78,18 @@ export default class Bot extends EventEmitter {
 					}
 				}
 			}
-
-			if (typeof module.start === 'function') {
-				await module.start();
-			}
 		}
+
+		const startPromises = Array.from(this.modules.values()).map(
+			(module) => {
+				if (typeof module.start === 'function') {
+					return module.start();
+				}
+				return Promise.resolve();
+			}
+		);
+
+		await Promise.all(startPromises);
 
 		this.client.login(this.options.token).catch((error) => {
 			this.logger.error('Failed to login:', error);
@@ -89,11 +100,14 @@ export default class Bot extends EventEmitter {
 	}
 
 	async stop(): Promise<void> {
-		for (const module of this.modules.values()) {
+		const stopPromises = Array.from(this.modules.values()).map((module) => {
 			if (typeof module.stop === 'function') {
-				await module.stop();
+				return module.stop();
 			}
-		}
+			return Promise.resolve();
+		});
+
+		await Promise.all(stopPromises);
 
 		this.client.destroy();
 
