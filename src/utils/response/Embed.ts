@@ -98,7 +98,7 @@ export default class Embed {
 
 	public setTimestamp(timestamp: string | Date | null = new Date()): this {
 		if (timestamp === null) {
-			delete this.data.timestamp;
+			this.data.timestamp = undefined;
 		} else {
 			this.data.timestamp =
 				timestamp instanceof Date ? timestamp.toISOString() : timestamp;
